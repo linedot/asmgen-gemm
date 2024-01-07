@@ -28,7 +28,6 @@ $ cd asmgen-gemm/tests
 $ python3 ../gemmerator.py --mr 8 --nr 6 -V 16 -U2 -M contiguous -t double -T fma256 --bvec-strat dist1_boff --avec-strat postload --output-filename naive_asmgen_gemm.cpp naive_asmgen_gemm.cpp.in
 $ g++ -std=c++20 -Ofast -g -fopenmp -march=native -mtune=native -I/usr/include/blis/ naivegemm.cpp naive_asmgen_gemm.cpp -o naivegemm -lfmt -lblis-mt
 $ ./naivegemm 
-~/SourceCode/git/asmgen-gemm/tests (master ✘)✚✭ ᐅ OMP_NUM_THREADS=16  ./naivegemm
 BLAS library finished in 95818us. (721.383 GFLOP/s)
 Naive implementation finished in 1312114us. (52.679 GFLOP/s)
 Naive asmgen implementation finished in 311049us. (222.220 GFLOP/s)
