@@ -1,0 +1,94 @@
+#include "performance_counters.hpp"
+
+#include <iostream>
+#include <cmath>
+#include <vector>
+
+
+constexpr std::size_t measurements = 100;
+constexpr double efficiency = 0.999;
+
+#if defined(__APPLE__)
+constexpr char cycles_event[] = "CPMU_CORE_CYCLE";
+#else
+constexpr char cycles_event[] = "CYCLES";
+#endif
+
+enum class mem_use
+{
+    SAMEDATA,
+    L1,
+    CONTIGUOUS
+};
+
+$GETSIMDSIZE
+
+int main()
+{
+    std::vector<std::string> counters = {{cycles_event}};
+    performance_counters pc(counters);
+
+    std::uint64_t iterations = pc.get_iterations_for_efficiency(efficiency,std::max(1,$VECINMR*$NR*$UNROLL/2),100000,cycles_event);
+    std::cout << "Will perform " << iterations << " iterations, reducing measurement overhead to " << (1.0-efficiency)*100.0 << "\%\n";
+    //std::uint64_t iterations = 300;
+    std::uint64_t kleft = 0;
+
+    std::vector<$DT> adata;
+    std::vector<$DT> bdata;
+    std::vector<$DT> cdata;
+
+    $DT alpha_val;
+    $DT beta_val;
+
+    $DT *alpha = &alpha_val;
+    $DT *beta = &beta_val;
+
+    auto mu = mem_use::$MEM;
+    switch(mu)
+    {
+    case mem_use::SAMEDATA:
+        // TODO: calculate from simd size
+        adata.resize(get_simd_size()/sizeof($DT));
+        bdata.resize(get_simd_size()/sizeof($DT));
+        cdata.resize(get_simd_size()/sizeof($DT));
+        break;
+    // TODO: implement L1-bound calculations (also in the generator)
+    case mem_use::L1:
+    case mem_use::CONTIGUOUS:
+        // TODO: This is for SVE on A64FX
+        adata.resize(get_simd_size()/sizeof($DT)*$VECINMR*iterations*$UNROLL);
+        bdata.resize($NR*iterations*$UNROLL);
+        cdata.resize(get_simd_size()/sizeof($DT)*$VECINMR*$NR);
+        break;
+    }
+    
+    $DT * a = adata.data();
+    $DT * b = bdata.data();
+    $DT * c = cdata.data();
+
+    for(std::size_t i = 0; i < measurements; i++)
+    {
+        pc.tic();
+        asm (
+                $GEMM
+                );
+        pc.toc_stat();
+    }
+
+    auto results = pc.get_counter_statistics();
+    auto flops = get_simd_size()/sizeof($DT)*2.0*static_cast<double>($VECINMR*$NR*$UNROLL)*iterations+3*$VECINMR*$NR;
+    for (const auto& res : results)
+    {
+        auto [name,min,avg,max] = res;
+
+        double avg_fp = static_cast<double>(avg);
+        std::cout << "Event: " << name << " - min: " << min 
+                  << "; avg: " << avg_fp
+                  << "; max: " << std::ceil(static_cast<double>(max)) << "\n";
+        if(cycles_event == name)
+        {
+            std::cout << "Avg. " << flops / avg_fp << " FLOPS/cycle\n";
+        }
+    }
+    return 0;
+}
