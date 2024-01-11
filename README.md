@@ -13,7 +13,7 @@ Code previously part of the uarch\_bench project
 ```
 $ cd asmgen-gemm
 $ python3 ./gemmerator.py --mr 8 --nr 6 -V 16 -M l1 -t double -T fma256 --bvec-strat dist1_boff --avec-strat postload --output-filename gemmbench_8_6.cpp gemmbench.cpp.in
-$ clang++ -std=c++20 -Ofast -g -fopenmp -march=native -mtune=native -o gemmbench_8_6 gemmbench_8_6.cpp performance_counters_perf.cpp
+$ clang++ -std=c++20 -Ofast -g -fopenmp -march=native -mtune=native -I performance_counters/ -o gemmbench_8_6 gemmbench_8_6.cpp performance_counters/performance_counters_perf.cpp
 $ ./gemmbench_8_6
 Will perform 5979 iterations, reducing measurement overhead to 0.1%
 Event: CYCLES - min: 286640; avg: 287538; max: 289944
