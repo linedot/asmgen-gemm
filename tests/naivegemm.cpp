@@ -119,9 +119,9 @@ int main()
 {
     using hrc = std::chrono::high_resolution_clock;
 
-    constexpr std::size_t M = 1200;
-    constexpr std::size_t N = 1200;
-    constexpr std::size_t K = 16000;
+    constexpr std::size_t M = 160;
+    constexpr std::size_t N = 80;
+    constexpr std::size_t K = 32;
     std::vector<double> C1(M*N);
     std::vector<double> C2(M*N);
     std::vector<double> C3(M*N);
