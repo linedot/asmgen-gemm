@@ -10,7 +10,7 @@ Code previously part of the uarch\_bench project
 
 
 ## Run performance test  (example on AVX2-capable machine)
-```
+```bash
 $ cd asmgen-gemm
 $ python3 ./gemmerator.py --mr 8 --nr 6 -V 16 -M l1 -t double -T fma256 --bvec-strat dist1_boff --avec-strat postload --output-filename gemmbench_8_6.cpp gemmbench.cpp.in
 $ clang++ -std=c++20 -Ofast -g -fopenmp -march=native -mtune=native -I performance_counters/ -o gemmbench_8_6 gemmbench_8_6.cpp performance_counters/performance_counters_perf.cpp
@@ -59,14 +59,13 @@ $ make install
 $ PATH=$AARCH64_TOOLCHAIN/bin:$PATH CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ AS=aarch64-linux-gnu-as ./configure --enable-static --enable-shared -t openmp --enable-cblas --prefix=$HOME/Software/aarch64/blis armsve
 $ make -j $(nproc)
 $ make install
-
 ```
 
 ### Cross-compile and install fmt
 
 CMake toolchain file aarch64.cmake:
 
-```
+```cmake
 # the name of the target operating system
 set(CMAKE_SYSTEM_NAME Linux)
 
@@ -90,7 +89,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
 CMake toolchain file riscv64.cmake
 
-```
+```cmake
 # the name of the target operating system
 set(CMAKE_SYSTEM_NAME Linux)
 
