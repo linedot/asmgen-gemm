@@ -31,7 +31,7 @@ void naive_asmgen_gemm(
         std::vector<data_type> c_tile(MR*NR);
         for(std::size_t k = 0; k < K; k++)
         {
-            #pragma omp unroll(${MR})
+            #pragma omp unroll(${VECINMR})
             for(std::size_t mi = 0; mi < MR; mi++)
             {
                 packed_a[k*MR+mi] = A[(m+mi)*lda+k];
@@ -47,7 +47,7 @@ void naive_asmgen_gemm(
                     packed_b[k*NR+ni] = B[k*ldb+n+ni];
                 }
             }
-            #pragma omp unroll(${MR})
+            #pragma omp unroll(${VECINMR})
             for(std::size_t mr = 0; mr < MR; mr++)
             {
                 #pragma omp unroll(${NR})
