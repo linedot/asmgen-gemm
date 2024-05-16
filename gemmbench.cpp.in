@@ -4,6 +4,9 @@
 #include <cmath>
 #include <vector>
 
+#include <algorithm>
+#include <random>
+
 
 constexpr std::size_t measurements = 100;
 constexpr double efficiency = 0.999;
@@ -33,6 +36,13 @@ int main()
     //std::uint64_t iterations = 300;
     std::uint64_t kleft = 0;
 
+    std::random_device rdev{};
+    std::vector<std::uint64_t> rdata(sizeof(std::mt19937_64)/sizeof(std::uint64_t));
+    std::generate(rdata.begin(), rdata.end(), [&]{return rdev();});
+    std::seed_seq sseq(rdata.begin(), rdata.end());
+    std::mt19937_64 rng(sseq);
+    std::uniform_real_distribution<double> dist(0.0,1.0);
+
     std::vector<$DT> adata;
     std::vector<$DT> bdata;
     std::vector<$DT> cdata;
@@ -61,13 +71,20 @@ int main()
         cdata.resize(get_simd_size()/sizeof($DT)*$VECINMR*$NR);
         break;
     }
-    
-    $DT * a = adata.data();
-    $DT * b = bdata.data();
-    $DT * c = cdata.data();
+
+    alpha_val = dist(rng);
+    beta_val  = dist(rng);
+
+    std::generate(adata.begin(), adata.end(), [&]{return dist(rng);});
+    std::generate(bdata.begin(), bdata.end(), [&]{return dist(rng);});
+    std::generate(cdata.begin(), cdata.end(), [&]{return dist(rng);});
 
     for(std::size_t i = 0; i < measurements; i++)
     {
+    
+        $DT * a = adata.data();
+        $DT * b = bdata.data();
+        $DT * c = cdata.data();
         pc.tic();
         asm (
                 $GEMM

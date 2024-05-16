@@ -1,6 +1,6 @@
 #!/bin/bash
 
-usage() { echo "Usage: $0 -T <avx_fma_128|avx_fma_256|avx512|neon|sve|rvv|rvv071> [-m <mr>] [-m <nr>] [-U <unroll>] [-V <max_vregs>] [-M <samedata|l1|contiguous>] [-t <double|single>] [-B <auto|dist1_boff|dist1_inc|fmaidx|fmavf|noload>] [-A <auto|preload|postload>] [-X]" 1>&2; exit 1; }
+usage() { echo "Usage: $0 -T <fma128|fma256|avx512|neon|sve|rvv|rvv071> [-m <mr>] [-m <nr>] [-U <unroll>] [-V <max_vregs>] [-M <samedata|l1|contiguous>] [-t <double|single>] [-B <auto|dist1_boff|dist1_inc|fmaidx|fmavf|noload>] [-A <auto|preload|postload>] [-X]" 1>&2; exit 1; }
 
 mr=16
 nr=30
@@ -16,7 +16,7 @@ while getopts "T:m:n:V:U:M:t:B:A:XC" o; do
     case "${o}" in
         T)
             T=${OPTARG}
-            ((T == "avx_fma_128" || T == "avx_fma_256" || T == "avx512" || T == "neon" || T == "sve" || T == "rvv" || T == "rvv071")) || usage
+            ((T == "fma128" || T == "fma256" || T == "avx512" || T == "neon" || T == "sve" || T == "rvv" || T == "rvv071")) || usage
             ;;
         m)
             mr=${OPTARG}
@@ -95,7 +95,7 @@ case "${T}" in
         ;;
 esac
 
-if [[ "${T}" != "avx512"* ]] && [[ "${T}" != "avx_fma_256"* ]] && [[ "${T}" != "avx_fma_128"* ]] && [[ "${T}" != "sve"* ]] && [[ "${T}" != "neon"* ]] && [[ "${T}" != "rvv"* ]] && [[ "${T}" != "rvv071"* ]]; then
+if [[ "${T}" != "avx512"* ]] && [[ "${T}" != "fma256"* ]] && [[ "${T}" != "fma128"* ]] && [[ "${T}" != "sve"* ]] && [[ "${T}" != "neon"* ]] && [[ "${T}" != "rvv"* ]] && [[ "${T}" != "rvv071"* ]]; then
     echo "-T ${T} unsupported"
     exit -1
 fi
@@ -113,21 +113,21 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
 else
     if [[ "$UARCH_BENCH_USE_PERF" == "1" ]]; then
-        PCTR_FILES="performance_counters_perf.cpp"
+        PCTR_FILES="performance_counters/performance_counters_perf.cpp"
     elif [[ "$UARCH_BENCH_USE_SIMPLE" == "1" ]]; then
         echo "Using simple performance_counters implementation"
         echo "On x86_64 this uses rdtsc, which does not actually"
         echo "measure CPU clock cycles, the result will be inaccurate"
-        PCTR_FILES="performance_counters_simple.cpp"
+        PCTR_FILES="performance_counters/performance_counters_simple.cpp"
     else
-        PCTR_FILES="performance_counters_papi.cpp -lpapi"
+        PCTR_FILES="performance_counters/performance_counters_papi.cpp -lpapi"
     fi
 fi
 
 
 bench_name="gemmbench_${mr}_${nr}_avec${avec_strat}_bvec${bvec_strat}"
-python3 gemmerator.py -T $T --nr $nr --mr $mr -U $unroll -V $max_vregs -M $mem_use -t $data_type --bvec-strat $bvec_strat --avec-strat $avec_strat gemmbench.cpp.in > $bench_name.cpp
-compile_command="$CXX  -g $CFLAGS -std=c++17 -o $bench_name $bench_name.cpp $PCTR_FILES"
+python3 gemmerator.py -T $T --nr $nr --mr $mr -U $unroll -V $max_vregs -M $mem_use -t $data_type --bvec-strat $bvec_strat --avec-strat $avec_strat gemmbench.cpp.in --output-filename $bench_name.cpp
+compile_command="$CXX  -g $CFLAGS -static -static-libgcc -static-libstdc++ -std=c++17 -Iperformance_counters -o $bench_name $bench_name.cpp $PCTR_FILES"
 echo Compilation command: $compile_command
 if [[ "$nocompile" == "0" ]]; then
     $compile_command
