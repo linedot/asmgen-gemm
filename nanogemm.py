@@ -432,12 +432,16 @@ def inner_kernel(asm : asmgen, grt : gemm_tracker,
                                        asm.freg(grt.bfreg_rot(grt.cur_bfreg)),
                                        asm.vreg(tile_idx), datatype)
 
-        ignore_b_load = wrapup_b and \
-                ((grt.cur_bvreg > unroll_factor*nr-grt.get_bvreg_count()-1) or \
-                 (grt.cur_bfreg > unroll_factor*nr-grt.get_bfreg_count()-1))
+        if bvec_strategy_type.FMAVF == layout.bvec_strat:
+            ignore_b_load = wrapup_b and (grt.cur_bfreg > unroll_factor*nr-grt.get_bfreg_count()-1)
+        else:
+            ignore_b_load = wrapup_b and (grt.cur_bvreg > unroll_factor*nr-grt.get_bvreg_count()-1)
+
         if not ignore_b_load:
             asmblock += load_b(asm=asm, grt=grt, layout=layout,
                                mem_use=mem_use, datatype=datatype)
+        else:
+            asmblock += f"// bfreg={grt.cur_bfreg}, unroll_factor*nr-grt.get_bfreg_count()-1={unroll_factor*nr-grt.get_bfreg_count()-1}\n"
         grt.cur_bvreg += 1
         grt.cur_bfreg += 1
 
@@ -537,7 +541,7 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
 
     # SVE: set p0 to true
     if asm.__class__.__name__ == "sve":
-        asm.ptrue(asm.preg(0),datatype)
+        asmblock += asm.ptrue(asm.preg(0),datatype)
 
     # RVV: vsetvlmax for the datatype
     if asm.__class__.__name__.startswith("rvv"):
