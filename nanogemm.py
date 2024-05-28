@@ -659,7 +659,7 @@ def vectorinit(asm : asmgen, grt : gemm_tracker,
         sparereg_idx = grt.rt.reserve_any_greg()
         sparereg = asm.greg(sparereg_idx)
         asmblock += asm.vsetvlmax(sparereg, datatype)
-        rt.unuse_greg(sparereg_idx)
+        grt.rt.unuse_greg(sparereg_idx)
 
     for i in range(grt.cvreg_count):
         asmblock += asm.zero_vreg(asm.vreg(i+first_vreg),datatype)
