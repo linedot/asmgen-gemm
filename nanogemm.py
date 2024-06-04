@@ -961,6 +961,7 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
         rt.unuse_greg(grt.oldbreg)
 
     clobber_vregs = [asm.vreg(i) for i in range(max_vregs)]
+    clobber_fregs = [asm.freg(i) for i in range(asm.max_fregs)]
     # one greg for counter, one for A address, one for B address
     clobber_gregs = [asm.greg(i) for i in rt.get_clobbered_gregs()]
     inputs = []
@@ -977,6 +978,6 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
     inputs.append(('c','m','(c)'))
     inputs.append(('alpha','m','(alpha)'))
     inputs.append(('beta','m','(beta)'))
-    asmblock += asm.operands(inputs=inputs,outputs=outputs,clobber=clobber_gregs+clobber_vregs)
+    asmblock += asm.operands(inputs=inputs,outputs=outputs,clobber=clobber_gregs+clobber_vregs+clobber_fregs)
 
     return asmblock
