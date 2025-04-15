@@ -1,6 +1,6 @@
 from asmgen.asmblocks.noarch import asmgen
 from asmgen.registers import(
-        greg, freg, vreg,
+        greg_base, freg_base, vreg_base,
         asm_data_type as adt,
         adt_size,
         reg_tracker)
@@ -65,12 +65,12 @@ class gemm_tracker:
         self.aareg = aareg
         self.bareg = bareg
         self.careg = careg
-        self.rt.reserve_specific_greg(aareg)
-        self.rt.reserve_specific_greg(bareg)
-        self.rt.reserve_specific_greg(careg)
+        self.rt.reserve_specific_reg('greg',aareg)
+        self.rt.reserve_specific_reg('greg',bareg)
+        self.rt.reserve_specific_reg('greg',careg)
 
         self.cvreg_count = vec_in_mr*nr
-        self.cvreg_first = self.rt.max_vregs - self.cvreg_count
+        self.cvreg_first = self.rt.max_regs['vreg'] - self.cvreg_count
         self.avreg_first = 0
         if avec_strategy_type.POSTLOAD == avec_strat:
             self.avreg_count = vec_in_mr
@@ -84,10 +84,10 @@ class gemm_tracker:
         vreg_range = [v for v in range(self.avreg_first, self.avreg_first + self.avreg_count)] +\
                      [v for v in range(self.bvreg_first, self.bvreg_first + self.bvreg_count)]
 
-        assert all(v < self.rt.max_vregs for v in vreg_range), f"Some vector registers chosen over max vec. register ({self.rt.max_vregs})"
+        assert all(v < self.rt.max_regs['vreg'] for v in vreg_range), f"Some vector registers chosen over max vec. register ({self.rt.max_regs['vreg']})"
 
         for vreg in vreg_range:
-            self.rt.reserve_specific_vreg(vreg)
+            self.rt.reserve_specific_reg('vreg',vreg)
 
         # other state
         self.oldareg = self.aareg
@@ -187,13 +187,12 @@ class gemm_params:
 # adding vector offset #
 # ==================== #
 
-def add_voff(asm : asmgen, areg : greg, aoffset, vlreg, dt):
+def add_voff(asm : asmgen, areg : greg_base, aoffset, vlreg, dt):
     asmblock = ""
-    # TODO: actually check if add_greg_voff is available instead of hardcoding rvv
-    if asm.has_add_greg_voff:
-        asmblock += asm.add_greg_voff(areg, aoffset, dt)
+    if asm.max_add_voff > 0:
+        asmblock += asm.add_greg_voff(reg=areg, offset=aoffset, dt=dt)
     else:
-        asmblock += asm.add_greg_greg(areg, areg, vlreg)
+        asmblock += asm.add_greg_greg(dst=areg, reg1=areg, reg2=vlreg)
     return asmblock
 
 # ============================== #
@@ -202,10 +201,10 @@ def add_voff(asm : asmgen, areg : greg, aoffset, vlreg, dt):
 
 def load_a_vec(asm : asmgen, grt : gemm_tracker,
                mem_use : mem_use_type, dt : adt):
-    asmblock  = asm.load_vector_voff(asm.greg(grt.aareg), 
-                                     grt.aoffset, 
-                                     asm.vreg(grt.cur_avreg),
-                                     dt)
+    asmblock  = asm.load_vector_voff(areg=asm.greg(grt.aareg), 
+                                     voffset=grt.aoffset, 
+                                     vreg=asm.vreg(grt.cur_avreg),
+                                     dt=dt)
     grt.aoffset = advance_vecaddr_voffset(grt.aoffset, mem_use)
     # There is a limit to immediate offsets, i.e for SVE you can offset -8 to 7 vectors
     # if we roll over this limit, add the offset to the a address register and 
@@ -230,34 +229,34 @@ def load_b(asm : asmgen, grt : gemm_tracker,
 
 
     if bvec_strategy_type.DIST1_INC == layout.bvec_strat:
-        asmblock += asm.load_vector_dist1_inc(asm.greg(grt.bareg), 
-                                              grt.boffset, 
-                                              asm.vreg(grt.bvreg_rot(grt.cur_bvreg)),
-                                              dt)
+        asmblock += asm.load_vector_dist1_inc(areg=asm.greg(grt.bareg), 
+                                              offset=adt_size(dt), 
+                                              vreg=asm.vreg(grt.bvreg_rot(grt.cur_bvreg)),
+                                              dt=dt)
         # Not important as offset stays
         boffcompare = asm.max_load_immoff(dt)
-        boffadd = lambda greg, boffset : asm.add_greg_imm(greg, boffset)
+        boffadd = lambda greg, boffset : asm.add_greg_imm(reg=greg, imm=boffset)
     elif bvec_strategy_type.DIST1_BOFF == layout.bvec_strat:
-        asmblock += asm.load_vector_dist1_boff(asm.greg(grt.bareg),
-                                               grt.boffset, 
-                                               asm.vreg(grt.bvreg_rot(grt.cur_bvreg)),
-                                               dt)
+        asmblock += asm.load_vector_dist1_boff(areg=asm.greg(grt.bareg),
+                                               offset=grt.boffset, 
+                                               vreg=asm.vreg(grt.bvreg_rot(grt.cur_bvreg)),
+                                               dt=dt)
         boffcompare = asm.max_load_immoff(dt)
-        boffadd = lambda greg, boffset : asm.add_greg_imm(greg, boffset)
+        boffadd = lambda greg, boffset : asm.add_greg_imm(reg=greg, imm=boffset)
     elif bvec_strategy_type.FMAIDX == layout.bvec_strat:
-        asmblock += asm.load_vector_voff(asm.greg(grt.bareg),
-                                         grt.boffset, 
-                                         asm.vreg(grt.bvreg_rot(grt.cur_bvreg//elements_in_vector)),
-                                         dt)
+        asmblock += asm.load_vector_voff(areg=asm.greg(grt.bareg),
+                                         voffset=grt.boffset, 
+                                         vreg=asm.vreg(grt.bvreg_rot(grt.cur_bvreg//elements_in_vector)),
+                                         dt=dt)
         boffcompare = asm.max_load_voff
-        boffadd = lambda greg, voffset : asm.add_greg_voff(greg, voffset, dt)
+        boffadd = lambda greg, voffset : asm.add_greg_voff(reg=greg, offset=voffset, dt=dt)
     elif bvec_strategy_type.FMAVF == layout.bvec_strat:
-        asmblock += asm.load_scalar_immoff(asm.greg(grt.bareg),
-                                           grt.boffset, 
-                                           asm.freg(grt.bfreg_rot(grt.cur_bfreg)),
-                                           dt)
+        asmblock += asm.load_scalar_immoff(areg=asm.greg(grt.bareg),
+                                           offset=grt.boffset, 
+                                           freg=asm.freg(grt.bfreg_rot(grt.cur_bfreg),dt=dt),
+                                           dt=dt)
         boffcompare = asm.max_fload_immoff(dt)
-        boffadd = lambda greg, boffset : asm.add_greg_imm(greg, boffset)
+        boffadd = lambda greg, boffset : asm.add_greg_imm(reg=greg, imm=boffset)
 
     if bvec_strategy_type.NOLOAD != layout.bvec_strat:
         grt.boffset = advance_b_offset(grt.boffset, asm, layout.bvec_strat, mem_use, dt)
@@ -285,18 +284,18 @@ def update_c_tile(asm : asmgen, rt : reg_tracker, grt : gemm_tracker,
     cur_c_m_s=0
     csoffset=0
     # register holding address for storing C tile
-    casreg = rt.reserve_any_greg()
+    casreg = rt.reserve_any_reg('greg')
     # copy from c source reg
-    asmblock = asm.mov_greg(asm.greg(grt.careg), asm.greg(casreg))
-    cscreg = rt.reserve_any_greg()
-    asmblock += asm.mov_param_to_greg("cs_c",asm.greg(cscreg))
-    asmblock += asm.shift_greg_left(asm.greg(cscreg),adt_size(dt).bit_length()-1)
+    asmblock = asm.mov_greg(src=asm.greg(grt.careg), dst=asm.greg(casreg))
+    cscreg = rt.reserve_any_reg('greg')
+    asmblock += asm.mov_param_to_greg(param="cs_c",dst=asm.greg(cscreg))
+    asmblock += asm.shift_greg_left(reg=asm.greg(cscreg),bit_count=adt_size(dt).bit_length()-1)
 
     # TODO: this is crap, also written only with RVV in mind
     if asm.max_load_voff < vectors_in_mr:
         # TODO: multiply instead of this
         asmblock += "".join([
-            asm.sub_greg_greg(asm.greg(cscreg), asm.greg(cscreg), asm.greg(grt.vlreg)) for i in range(vectors_in_mr-asm.max_load_voff-1)
+            asm.sub_greg_greg(dst=asm.greg(cscreg), reg1=asm.greg(cscreg), reg2=asm.greg(grt.vlreg)) for i in range(vectors_in_mr-asm.max_load_voff-1)
         ])
     # TODO: Deduplicate code for c store in and after loop
     # TODO: Deduplicate code for advancing offsets (also in the code above)
@@ -307,15 +306,15 @@ def update_c_tile(asm : asmgen, rt : reg_tracker, grt : gemm_tracker,
             # Start storing if we run out of free regs or already halfway through
             if 0 == len(free_vregs) or len(c_tile_store_queue) > ((nr*vectors_in_mr)//2):
                 csvreg = c_tile_store_queue.pop(0)
-                asmblock += asm.store_vector_voff(asm.greg(casreg),
-                                      csoffset,
-                                      asm.vreg(csvreg),
-                                      dt)
+                asmblock += asm.store_vector_voff(areg=asm.greg(casreg),
+                                      voffset=csoffset,
+                                      vreg=asm.vreg(csvreg),
+                                      dt=dt)
                 free_vregs.append(csvreg)
                 csoffset = advance_vecaddr_voffset(csoffset, mem_use)
                 cur_c_m_s += 1
                 if ((0 == (cur_c_m_s % vectors_in_mr)) and not ((layout.bvec_strat == bvec_strategy_type.NOLOAD) or (mem_use == mem_use_type.SAMEDATA))):
-                    asmblock += asm.add_greg_greg(asm.greg(casreg), asm.greg(casreg), asm.greg(cscreg))
+                    asmblock += asm.add_greg_greg(dst=asm.greg(casreg), reg1=asm.greg(casreg), reg2=asm.greg(cscreg))
                     cur_c_m_s = 0
                     csoffset = 0
                 elif not ((layout.bvec_strat == bvec_strategy_type.NOLOAD) or (mem_use == mem_use_type.SAMEDATA) or (0 != (cur_c_m_s % vectors_in_mr))):
@@ -330,14 +329,14 @@ def update_c_tile(asm : asmgen, rt : reg_tracker, grt : gemm_tracker,
             # get a free vreg from the beginning of the list
             if not beta0:
                 cvreg = free_vregs.pop(0)
-                asmblock += asm.load_vector_voff(asm.greg(grt.careg), 
-                                                 coffset, 
-                                                 asm.vreg(cvreg),
-                                                 dt)
+                asmblock += asm.load_vector_voff(areg=asm.greg(grt.careg), 
+                                                 voffset=coffset, 
+                                                 vreg=asm.vreg(cvreg),
+                                                 dt=dt)
                 coffset = advance_vecaddr_voffset(coffset, mem_use)
                 cur_c_m += 1
                 if ((0 == (cur_c_m % vectors_in_mr)) and not ((layout.bvec_strat == bvec_strategy_type.NOLOAD) or (mem_use == mem_use_type.SAMEDATA))):
-                    asmblock += asm.add_greg_greg(asm.greg(grt.careg), asm.greg(grt.careg), asm.greg(cscreg))
+                    asmblock += asm.add_greg_greg(dst=asm.greg(grt.careg), reg1=asm.greg(grt.careg), reg2=asm.greg(cscreg))
                     cur_c_m = 0
                 elif not ((layout.bvec_strat == bvec_strategy_type.NOLOAD) or (mem_use == mem_use_type.SAMEDATA) or (0 != (cur_c_m % vectors_in_mr))):
                     raise NotImplementedError(f"Special case not handled yet (mr larger than max. vector offset expressable in asm):\n coffset={coffset}\n vectors_in_mr={vectors_in_mr}\n max_load_voff={asm.max_load_voff}")
@@ -348,42 +347,42 @@ def update_c_tile(asm : asmgen, rt : reg_tracker, grt : gemm_tracker,
 
             if layout.bvec_strat == bvec_strategy_type.FMAVF:
                 if not beta0:
-                    asmblock += asm.fmul(asm.vreg(cvreg),
-                                         asm.freg(betareg),
-                                         asm.vreg(cvreg),
-                                         dt, dt, dt,
-                                         modifiers={mod.vf})
-                    asmblock += asm.fma(asm.vreg(tile_idx),
-                                        asm.freg(alphareg),
-                                        asm.vreg(cvreg),
-                                        dt, dt, dt,
-                                        modifiers={mod.vf})
+                    asmblock += asm.fmul(adreg=asm.vreg(cvreg),
+                                         bdreg=asm.freg(betareg,dt=dt),
+                                         cdreg=asm.vreg(cvreg),
+                                         a_dt=dt, b_dt=dt, c_dt=dt,
+                                         modifiers={mod.VF})
+                    asmblock += asm.fma(adreg=asm.vreg(tile_idx),
+                                        bdreg=asm.freg(alphareg,dt=dt),
+                                        cdreg=asm.vreg(cvreg),
+                                        a_dt=dt, b_dt=dt, c_dt=dt,
+                                        modifiers={mod.VF})
                     c_tile_store_queue.append(cvreg)
                     free_vregs.append(tile_idx)
                 else:
-                    asmblock += asm.fmul(asm.vreg(tile_idx),
-                                         asm.freg(alphareg),
-                                         asm.vreg(tile_idx),
-                                         dt, dt, dt,
-                                         modifiers={mod.vf})
+                    asmblock += asm.fmul(adreg=asm.vreg(tile_idx),
+                                         bdreg=asm.freg(alphareg,dt=dt),
+                                         cdreg=asm.vreg(tile_idx),
+                                         a_dt=dt, b_dt=dt, c_dt=dt,
+                                         modifiers={mod.VF})
                     c_tile_store_queue.append(tile_idx)
             else:
                 if not beta0:
-                    asmblock += asm.fmul(asm.vreg(cvreg),
-                                         asm.vreg(betareg),
-                                         asm.vreg(cvreg),
-                                         dt, dt, dt)
-                    asmblock += asm.fma(asm.vreg(alphareg),
-                                        asm.vreg(tile_idx),
-                                        asm.vreg(cvreg),
-                                         dt, dt, dt)
+                    asmblock += asm.fmul(adreg=asm.vreg(cvreg),
+                                         bdreg=asm.vreg(betareg),
+                                         cdreg=asm.vreg(cvreg),
+                                         a_dt=dt, b_dt=dt, c_dt=dt)
+                    asmblock += asm.fma(adreg=asm.vreg(alphareg),
+                                        bdreg=asm.vreg(tile_idx),
+                                        cdreg=asm.vreg(cvreg),
+                                        a_dt=dt, b_dt=dt, c_dt=dt)
                     c_tile_store_queue.append(cvreg)
                     free_vregs.append(tile_idx)
                 else:
-                    asmblock += asm.fmul(asm.vreg(tile_idx),
-                                         asm.vreg(alphareg),
-                                         asm.vreg(tile_idx),
-                                         dt, dt, dt)
+                    asmblock += asm.fmul(adreg=asm.vreg(tile_idx),
+                                         bdreg=asm.vreg(alphareg),
+                                         cdreg=asm.vreg(tile_idx),
+                                         a_dt=dt, b_dt=dt, c_dt=dt)
                     c_tile_store_queue.append(tile_idx)
             # TODO: can tile_idx == cvreg happen? (would already cause trouble before, 
             #       but check anyways)
@@ -402,14 +401,15 @@ def update_c_tile(asm : asmgen, rt : reg_tracker, grt : gemm_tracker,
         #TODO: inc column here
 
     for csvreg in c_tile_store_queue:
-        asmblock += asm.store_vector_voff(asm.greg(casreg),
-                              csoffset,
-                              asm.vreg(csvreg),
-                              dt)
+        asmblock += asm.store_vector_voff(
+                              areg=asm.greg(casreg),
+                              voffset=csoffset,
+                              vreg=asm.vreg(csvreg),
+                              dt=dt)
         csoffset = advance_vecaddr_voffset(csoffset, mem_use)
         cur_c_m_s += 1
         if ((0 == (cur_c_m_s % vectors_in_mr)) and not ((layout.bvec_strat == bvec_strategy_type.NOLOAD) or (mem_use == mem_use_type.SAMEDATA))):
-            asmblock += asm.add_greg_greg(asm.greg(casreg), asm.greg(casreg), asm.greg(cscreg))
+            asmblock += asm.add_greg_greg(dst=asm.greg(casreg), reg1=asm.greg(casreg), reg2=asm.greg(cscreg))
             cur_c_m_s = 0
             csoffset = 0
         elif not ((layout.bvec_strat == bvec_strategy_type.NOLOAD) or (mem_use == mem_use_type.SAMEDATA) or (0 != (cur_c_m_s % vectors_in_mr))):
@@ -418,7 +418,7 @@ def update_c_tile(asm : asmgen, rt : reg_tracker, grt : gemm_tracker,
             asmblock += add_voff(asm, asm.greg(casreg), csoffset, 
                                  asm.greg(grt.vlreg), dt)
             csoffset = 0
-    rt.unuse_greg(casreg)
+    rt.unuse_reg('greg', casreg)
 
     return asmblock
 
@@ -460,19 +460,22 @@ def inner_kernel(asm : asmgen, grt : gemm_tracker,
             # FMA HERE
             avreg_id = (grt.avreg_offset+j)
             if layout.bvec_strat in [bvec_strategy_type.DIST1_BOFF,bvec_strategy_type.DIST1_INC,bvec_strategy_type.NOLOAD]:
-                asmblock += asm.fma(asm.vreg(grt.avreg(avreg_id)),
-                                    asm.vreg(grt.bvreg_rot(grt.cur_bvreg)), 
-                                    asm.vreg(tile_idx), dt, dt, dt)
+                asmblock += asm.fma(adreg=asm.vreg(grt.avreg(avreg_id)),
+                                    bdreg=asm.vreg(grt.bvreg_rot(grt.cur_bvreg)), 
+                                    cdreg=asm.vreg(tile_idx),
+                                    a_dt=dt, b_dt=dt, c_dt=dt)
             elif bvec_strategy_type.FMAIDX == layout.bvec_strat:
-                asmblock += asm.fma(asm.vreg(grt.avreg(avreg_id)),
-                                    asm.vreg(grt.bvreg_rot(grt.cur_bvreg//elements_in_vector)),
-                                    asm.vreg(tile_idx), dt, dt, dt,
-                                    modifiers={mod.idx}, idx=grt.cur_bvreg % elements_in_vector)
+                asmblock += asm.fma(adreg=asm.vreg(grt.avreg(avreg_id)),
+                                    bdreg=asm.vreg(grt.bvreg_rot(grt.cur_bvreg//elements_in_vector)),
+                                    cdreg=asm.vreg(tile_idx),
+                                    a_dt=dt, b_dt=dt, c_dt=dt,
+                                    modifiers={mod.IDX}, idx=grt.cur_bvreg % elements_in_vector)
             elif bvec_strategy_type.FMAVF == layout.bvec_strat:
-                asmblock += asm.fma(asm.vreg(grt.avreg(avreg_id)),
-                                    asm.freg(grt.bfreg_rot(grt.cur_bfreg)),
-                                    asm.vreg(tile_idx), dt, dt, dt,
-                                    modifiers={mod.vf})
+                asmblock += asm.fma(adreg=asm.vreg(grt.avreg(avreg_id)),
+                                    bdreg=asm.freg(grt.bfreg_rot(grt.cur_bfreg), dt=dt),
+                                    cdreg=asm.vreg(tile_idx),
+                                    a_dt=dt, b_dt=dt, c_dt=dt,
+                                    modifiers={mod.VF})
 
         if bvec_strategy_type.FMAVF == layout.bvec_strat:
             ignore_b_load = wrapup_b and (grt.cur_bfreg > unroll_factor*nr-grt.get_bfreg_count()-1)
@@ -538,7 +541,7 @@ def finalize_mm(asm : asmgen, grt :gemm_tracker,
                              asm.greg(grt.vlreg), dt)
         grt.aoffset = 0
     if grt.boffset > 0:
-        asmblock += asm.add_greg_imm(asm.greg(grt.bareg), grt.boffset)
+        asmblock += asm.add_greg_imm(reg=asm.greg(grt.bareg), imm=grt.boffset)
         grt.boffset = 0
 
     # Reset current a/b vreg indices
@@ -563,19 +566,19 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
     assert isinstance(dt, adt), f"Not an adt: {dt}"
 
     rt = grt.rt
-    asmblock  = asm.load_pointer(asm.greg(grt.aareg), "a")
-    asmblock += asm.load_pointer(asm.greg(grt.bareg), "b")
-    asmblock += asm.load_pointer(asm.greg(grt.careg), "c")
+    asmblock  = asm.load_pointer(areg=asm.greg(grt.aareg), name="a")
+    asmblock += asm.load_pointer(areg=asm.greg(grt.bareg), name="b")
+    asmblock += asm.load_pointer(areg=asm.greg(grt.careg), name="c")
 
     if mem_use_type.L1 == mem_use:
-        oldareg_idx = rt.reserve_any_greg()
-        oldbreg_idx = rt.reserve_any_greg()
+        oldareg_idx = rt.reserve_any_reg('greg')
+        oldbreg_idx = rt.reserve_any_reg('greg')
         oldareg = asm.greg(oldareg_idx)
         oldbreg = asm.greg(oldbreg_idx)
         grt.oldareg = oldareg_idx
         grt.oldbreg = oldbreg_idx
-        asmblock += asm.mov_greg(asm.greg(grt.aareg), oldareg)
-        asmblock += asm.mov_greg(asm.greg(grt.bareg), oldbreg)
+        asmblock += asm.mov_greg(src=asm.greg(grt.aareg), dst=oldareg)
+        asmblock += asm.mov_greg(src=asm.greg(grt.bareg), dst=oldbreg)
 
     # ================================= #
     #             ISA QUIRKS            #
@@ -587,15 +590,16 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
 
     # RVV: vsetvlmax for the dt
     if asm.__class__.__name__.startswith("rvv"):
-        sparereg_idx = rt.reserve_any_greg()
+        sparereg_idx = rt.reserve_any_reg('greg')
         sparereg = asm.greg(sparereg_idx)
-        asmblock += asm.vsetvlmax(sparereg, dt)
-        rt.unuse_greg(sparereg_idx)
+        asmblock += asm.vsetvlmax(reg=sparereg, dt=dt)
+        rt.unuse_reg('greg', sparereg_idx)
 
     if asm.__class__.__name__.startswith("rvv"):
-        vlreg_idx = rt.reserve_any_greg()
+        vlreg_idx = rt.reserve_any_reg('greg')
         vlreg = asm.greg(vlreg_idx)
-        asmblock += asm.simd_size_to_greg(vlreg, dt)
+        asmblock += asm.simd_size_to_greg(reg=vlreg, dt=dt)
+        asmblock += asm.shift_greg_left(reg=vlreg,bit_count=adt_size(dt).bit_length()-1)
         grt.vlreg = vlreg_idx
 
     # ================================= #
@@ -608,9 +612,9 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
     for (areg,count) in list_bac:
         offset = 0
         restore_areg = False
-        tmpreg = rt.reserve_any_greg()
+        tmpreg = rt.reserve_any_reg('greg')
         for _ in range(count):
-            asmblock += asm.prefetch_l1_boff(asm.greg(areg), offset)
+            asmblock += asm.prefetch_l1_boff(areg=asm.greg(areg), offset=offset)
             offset += prefetch.cl_size
             if offset > asm.max_prefetch_offset:
                 if not restore_areg:
@@ -619,7 +623,7 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
                 restore_areg = True
         if restore_areg:
             asmblock += asm.mov_greg(asm.greg(tmpreg), asm.greg(areg))
-        rt.unuse_greg(tmpreg)
+        rt.unuse_reg('greg', tmpreg)
 
     # ================================= #
     #             PRELOADING            #
@@ -630,10 +634,10 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
     offset = 0
     for i in range(preload_a):
         asmblock += asm.load_vector_voff(
-                asm.greg(grt.aareg),
-                offset,
-                asm.vreg(grt.avreg(i)),
-                dt)
+                areg=asm.greg(grt.aareg),
+                voffset=offset,
+                vreg=asm.vreg(grt.avreg(i)),
+                dt=dt)
         offset += 1
         if offset > asm.max_load_voff:
             asmblock += add_voff(asm, asm.greg(grt.aareg), offset, 
@@ -648,7 +652,7 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
     # preloading b
     short_b_offset = 0
     elements_in_vector = asm.simd_size//adt_size(dt)
-    tmpreg = rt.reserve_any_greg()
+    tmpreg = rt.reserve_any_reg('greg')
     if bvec_strategy_type.FMAIDX == layout.bvec_strat:
         preload_b = preload_b//elements_in_vector
     for i in range(preload_b):
@@ -663,27 +667,27 @@ def memoryinit(asm : asmgen, grt : gemm_tracker, layout : kernel_layout,
             grt.cur_bvreg += 1
 
         if nr-1 == i and preload_b > nr and grt.boffset > 0:
-            asmblock += asm.mov_param_to_greg("iterations",asm.greg(tmpreg))
-            asmblock += asm.jzero(asm.greg(tmpreg), "short_b_fixup")
+            asmblock += asm.mov_param_to_greg(param="iterations",dst=asm.greg(tmpreg))
+            asmblock += asm.jzero(reg=asm.greg(tmpreg), label="short_b_fixup")
             short_b_offset = grt.boffset
 
     if bvec_strategy_type.NOLOAD != layout.bvec_strat:
         if grt.boffset > 0:
             if bvec_strategy_type.FMAIDX == layout.bvec_strat:
-                asmblock += asm.add_greg_voff(asm.greg(grt.bareg), grt.boffset, dt)
+                asmblock += asm.add_greg_voff(reg=asm.greg(grt.bareg), offset=grt.boffset, dt=dt)
             else:
-                asmblock += asm.add_greg_imm(asm.greg(grt.bareg), grt.boffset)
+                asmblock += asm.add_greg_imm(reg=asm.greg(grt.bareg), imm=grt.boffset)
             grt.boffset = 0
     if preload_b > nr and short_b_offset > 0:
-        asmblock += asm.jump("load_b_end")
-        asmblock += asm.label("short_b_fixup")
+        asmblock += asm.jump(label="load_b_end")
+        asmblock += asm.label(label="short_b_fixup")
         if bvec_strategy_type.FMAIDX == layout.bvec_strat:
             asmblock += asm.add_greg_voff(asm.greg(grt.bareg), short_b_offset, dt)
         else:
-            asmblock += asm.add_greg_imm(asm.greg(grt.bareg), short_b_offset)
-        asmblock += asm.jump("k1novecload")
-    asmblock += asm.label("load_b_end")
-    rt.unuse_greg(tmpreg)
+            asmblock += asm.add_greg_imm(reg=asm.greg(grt.bareg), imm=short_b_offset)
+        asmblock += asm.jump(label="k1novecload")
+    asmblock += asm.label(label="load_b_end")
+    rt.unuse_reg('greg', tmpreg)
     return asmblock
 
 # ================================#
@@ -698,13 +702,13 @@ def vectorinit(asm : asmgen, grt : gemm_tracker,
 
     # RVV: vsetvlmax for the dt
     if asm.__class__.__name__.startswith("rvv"):
-        sparereg_idx = grt.rt.reserve_any_greg()
+        sparereg_idx = grt.rt.reserve_any_reg('greg')
         sparereg = asm.greg(sparereg_idx)
-        asmblock += asm.vsetvlmax(sparereg, dt)
-        grt.rt.unuse_greg(sparereg_idx)
+        asmblock += asm.vsetvlmax(reg=sparereg, dt=dt)
+        grt.rt.unuse_reg('greg', sparereg_idx)
 
     for i in range(grt.cvreg_count):
-        asmblock += asm.zero_vreg(asm.vreg(i+first_vreg),dt)
+        asmblock += asm.zero_vreg(vreg=asm.vreg(i+first_vreg),dt=dt)
     return asmblock
 
 def nanogemm(asm : asmgen, pf : prefetch_options,
@@ -744,9 +748,10 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
 
     """
 
-    rt = reg_tracker(max_greg=asm.max_gregs,
-                     max_vreg=max_vregs,
-                     max_freg=asm.max_fregs)
+    rt = reg_tracker([
+        ('greg',asm.max_gregs),
+        ('vreg',max_vregs),
+        ('freg',asm.max_fregs)])
 
     bfreg_count = -1
     if bvec_strategy_type.FMAVF == layout.bvec_strat:
@@ -773,11 +778,11 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
                           preload_b=bregs, dt=dt)
     
 
-    loopreg = rt.reserve_any_greg()
-    asmblock += asm.mov_param_to_greg("iterations", asm.greg(loopreg))
-    asmblock += asm.jzero(asm.greg(loopreg), "kloopend")
-    asmblock += asm.add_greg_imm(asm.greg(loopreg),-1)
-    asmblock += asm.loopbegin_nz(asm.greg(loopreg),"kloop","klast")
+    loopreg = rt.reserve_any_reg('greg')
+    asmblock += asm.mov_param_to_greg(param="iterations", dst=asm.greg(loopreg))
+    asmblock += asm.jzero(reg=asm.greg(loopreg), label="kloopend")
+    asmblock += asm.add_greg_imm(reg=asm.greg(loopreg),imm=-1)
+    asmblock += asm.loopbegin_nz(reg=asm.greg(loopreg),label="kloop",labelskip="klast")
     # TODO: layouts,instruction mixes, uarch-dependent methods (FMA into memory for avx....)
 
     grt.avreg_offset = 0
@@ -803,10 +808,10 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
                             dt=dt)
     # reset pointers
     if mem_use_type.L1 == mem_use:
-        asmblock += asm.mov_greg(asm.greg(grt.oldareg),asm.greg(grt.aareg))
-        asmblock += asm.mov_greg(asm.greg(grt.oldbreg),asm.greg(grt.bareg))
-    asmblock += asm.loopend(asm.greg(loopreg),"kloop")
-    asmblock += asm.label("klast")
+        asmblock += asm.mov_greg(src=asm.greg(grt.oldareg),dst=asm.greg(grt.aareg))
+        asmblock += asm.mov_greg(src=asm.greg(grt.oldbreg),dst=asm.greg(grt.bareg))
+    asmblock += asm.loopend(reg=asm.greg(loopreg),label="kloop")
+    asmblock += asm.label(label="klast")
     for i in range(unroll_factor):
         asmblock += inner_kernel(asm=asm, grt=grt, layout=layout,
                                  mem_use=mem_use,
@@ -820,11 +825,11 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
                             unroll_factor=unroll_factor,
                             nr=nr,
                             dt=dt)
-    asmblock += asm.label("kloopend")
+    asmblock += asm.label(label="kloopend")
 
 
-    asmblock += asm.mov_param_to_greg("kleft", asm.greg(loopreg))
-    asmblock += asm.jzero(asm.greg(loopreg), "k1loopend")
+    asmblock += asm.mov_param_to_greg(param="kleft", dst=asm.greg(loopreg))
+    asmblock += asm.jzero(reg=asm.greg(loopreg), label="k1loopend")
     
     # We need to ensure that a and b are available for the 1xk loop 
 
@@ -832,10 +837,10 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
     offset = 0
     for i in range(vectors_in_mr):
         asmblock += asm.load_vector_voff(
-                asm.greg(grt.aareg),
-                offset,
-                asm.vreg(grt.avreg(i)),
-                dt)
+                areg=asm.greg(grt.aareg),
+                voffset=offset,
+                vreg=asm.vreg(grt.avreg(i)),
+                dt=dt)
         offset += 1
         if offset > asm.max_load_voff:
             asmblock += add_voff(asm, asm.greg(grt.aareg), offset, 
@@ -850,7 +855,7 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
     # preloading b
     short_b_offset = 0
     elements_in_vector = asm.simd_size//adt_size(dt)
-    tmpreg = rt.reserve_any_greg()
+    tmpreg = rt.reserve_any_reg('greg')
     preload_b = nr
     if bvec_strategy_type.FMAIDX == layout.bvec_strat:
         preload_b = preload_b//elements_in_vector
@@ -868,21 +873,21 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
     if bvec_strategy_type.NOLOAD != layout.bvec_strat:
         if grt.boffset > 0:
             if bvec_strategy_type.FMAIDX == layout.bvec_strat:
-                asmblock += asm.add_greg_voff(asm.greg(grt.bareg), grt.boffset, dt)
+                asmblock += asm.add_greg_voff(reg=asm.greg(grt.bareg), offset=grt.boffset, dt=dt)
             else:
-                asmblock += asm.add_greg_imm(asm.greg(grt.bareg), grt.boffset)
+                asmblock += asm.add_greg_imm(reg=asm.greg(grt.bareg), imm=grt.boffset)
             grt.boffset = 0
     # In case the unrolled loop was skipped, a and b are preloaded
     # So put a label to jump to 
-    asmblock += asm.label("k1novecload")
+    asmblock += asm.label(label="k1novecload")
     # reset a and b vecs to start 
     grt.cur_avreg = 0
     grt.cur_bvreg = 0
     grt.cur_bfreg = 0
     grt.avreg_offset = 0
 
-    asmblock += asm.add_greg_imm(asm.greg(loopreg),-1)
-    asmblock += asm.loopbegin_nz(asm.greg(loopreg),"k1loop","k1last")
+    asmblock += asm.add_greg_imm(reg=asm.greg(loopreg),imm=-1)
+    asmblock += asm.loopbegin_nz(reg=asm.greg(loopreg),label="k1loop",labelskip="k1last")
     asmblock += inner_kernel(asm=asm, grt=grt, layout=layout,
                              mem_use=mem_use,
                              vectors_in_mr=vectors_in_mr,nr=nr,
@@ -896,10 +901,10 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
                             nr=nr,
                             dt=dt)
     if mem_use_type.L1 == mem_use:
-        asmblock += asm.mov_greg(asm.greg(grt.oldareg),asm.greg(grt.aareg))
-        asmblock += asm.mov_greg(asm.greg(grt.oldbreg),asm.greg(grt.bareg))
-    asmblock += asm.loopend(asm.greg(loopreg),"k1loop")
-    asmblock += asm.label("k1last")
+        asmblock += asm.mov_greg(src=asm.greg(grt.oldareg),dst=asm.greg(grt.aareg))
+        asmblock += asm.mov_greg(src=asm.greg(grt.oldbreg),dst=asm.greg(grt.bareg))
+    asmblock += asm.loopend(reg=asm.greg(loopreg),label="k1loop")
+    asmblock += asm.label(label="k1last")
     grt.cur_avreg = 0
     grt.cur_bvreg = 0
     grt.cur_bfreg = 0
@@ -912,31 +917,31 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
                              wrapup_a=True,
                              wrapup_b=True,
                              dt=dt)
-    asmblock += asm.label("k1loopend")
+    asmblock += asm.label(label="k1loopend")
     # We no longer need a and b address regs, so reuse them for alpha/beta
-    asmblock += asm.load_pointer(asm.greg(grt.aareg), "alpha")
-    asmblock += asm.load_pointer(asm.greg(grt.bareg), "beta")
-    alphafreg = rt.reserve_any_freg()
-    betafreg = rt.reserve_any_freg()
+    asmblock += asm.load_pointer(areg=asm.greg(grt.aareg), name="alpha")
+    asmblock += asm.load_pointer(areg=asm.greg(grt.bareg), name="beta")
+    alphafreg = rt.reserve_any_reg('freg')
+    betafreg = rt.reserve_any_reg('freg')
 
     # All avregs and bvregs are free now
     free_vregs=[bvreg for bvreg in range(grt.bvreg_first,grt.bvreg_first+grt.bvreg_count)]
     free_vregs+=[avreg for avreg in range(grt.avreg_first,grt.avreg_first+grt.avreg_count)]
 
-    asmblock += asm.load_scalar_immoff(asm.greg(grt.aareg),
-                                      0, 
-                                      asm.freg(alphafreg),
-                                      dt)
-    asmblock += asm.load_scalar_immoff(asm.greg(grt.bareg),
-                                       0, 
-                                       asm.freg(betafreg),
-                                       dt)
+    asmblock += asm.load_scalar_immoff(areg=asm.greg(grt.aareg),
+                                      offset=0, 
+                                      freg=asm.freg(alphafreg, dt=dt),
+                                      dt=dt)
+    asmblock += asm.load_scalar_immoff(areg=asm.greg(grt.bareg),
+                                       offset=0, 
+                                       freg=asm.freg(betafreg, dt=dt),
+                                       dt=dt)
 
-    tmpfreg = rt.reserve_any_freg()
-    tmpgreg = rt.reserve_any_greg()
-    asmblock += asm.jfzero(asm.freg(betafreg), asm.freg(tmpfreg), asm.greg(tmpgreg), "beta0", dt)
-    rt.unuse_freg(tmpfreg)
-    rt.unuse_greg(tmpgreg)
+    tmpfreg = rt.reserve_any_reg('freg')
+    tmpgreg = rt.reserve_any_reg('greg')
+    asmblock += asm.jfzero(freg1=asm.freg(betafreg,dt=dt), freg2=asm.freg(tmpfreg,dt=dt), greg=asm.greg(tmpgreg), label="beta0", dt=dt)
+    rt.unuse_reg('freg', tmpfreg)
+    rt.unuse_reg('greg', tmpgreg)
 
     alphareg = 0
     betareg = 0
@@ -949,14 +954,12 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
         betavreg = free_vregs.pop()
         alphareg = alphavreg
         betareg = betavreg
-        asmblock += asm.load_vector_dist1(asm.greg(grt.aareg),
-                                          0, 
-                                          asm.vreg(alphavreg),
-                                          dt)
-        asmblock += asm.load_vector_dist1(asm.greg(grt.bareg),
-                                          0, 
-                                          asm.vreg(betavreg),
-                                          dt)
+        asmblock += asm.load_vector_dist1(areg=asm.greg(grt.aareg),
+                                          vreg=asm.vreg(alphavreg),
+                                          dt=dt)
+        asmblock += asm.load_vector_dist1(areg=asm.greg(grt.bareg),
+                                          vreg=asm.vreg(betavreg),
+                                          dt=dt)
     asmblock += update_c_tile(asm, rt, grt,
                               layout, mem_use,
                               free_vregs,
@@ -965,8 +968,8 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
                               vectors_in_mr, nr,
                               False,
                               dt)
-    asmblock += asm.jump("beta0end")
-    asmblock += asm.label("beta0")
+    asmblock += asm.jump(label="beta0end")
+    asmblock += asm.label(label="beta0")
 
     # reset free vregs between beta nonzero and beta zero versions (removing accum tile vregs)
     free_vregs=[bvreg for bvreg in range(grt.bvreg_first,grt.bvreg_first+grt.bvreg_count)]
@@ -980,10 +983,9 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
         # TODO: Check for possibly running out of vector registers
         alphavreg = free_vregs.pop()
         alphareg = alphavreg
-        asmblock += asm.load_vector_dist1(asm.greg(grt.aareg),
-                                          0, 
-                                          asm.vreg(alphavreg),
-                                          dt)
+        asmblock += asm.load_vector_dist1(areg=asm.greg(grt.aareg),
+                                          vreg=asm.vreg(alphavreg),
+                                          dt=dt)
     asmblock += update_c_tile(asm, rt, grt,
                               layout, mem_use,
                               free_vregs,
@@ -992,20 +994,20 @@ def nanogemm(asm : asmgen, pf : prefetch_options,
                               vectors_in_mr, nr,
                               True,
                               dt)
-    asmblock += asm.label("beta0end")
+    asmblock += asm.label(label="beta0end")
     #asmblock += asm.label("alpha1betazero")
     #asmblock += asm.label("alpha1")
 
     if asm.__class__.__name__.startswith("rvv"):
-        rt.unuse_greg(grt.vlreg)
+        rt.unuse_reg('greg', grt.vlreg)
     if mem_use_type.L1 == mem_use:
-        rt.unuse_greg(grt.oldareg)
-        rt.unuse_greg(grt.oldbreg)
+        rt.unuse_reg('greg', grt.oldareg)
+        rt.unuse_reg('greg', grt.oldbreg)
 
     clobber_vregs = [asm.vreg(i) for i in range(max_vregs)]
-    clobber_fregs = [asm.freg(i) for i in range(asm.max_fregs)]
+    clobber_fregs = [asm.freg(i,dt=dt) for i in range(asm.max_fregs)]
     # one greg for counter, one for A address, one for B address
-    clobber_gregs = [asm.greg(i) for i in rt.get_clobbered_gregs()]
+    clobber_gregs = [asm.greg(i) for i in rt.get_clobbered_regs('greg')]
     inputs = []
     outputs = []
     # Need to indicate to compiler that we'll write to the memory pointed at by c
